@@ -1,4 +1,4 @@
-.PHONY: all ci build proto lint test-norace test deps docker-build docker-test docker-push docker-manifest crossbuild tarballs-release version clean
+.PHONY: all ci build proto lint test-norace test deps docker-build docker-test docker-push docker-manifest crossbuild tarballs-release version clean busybox-versions
 
 # Version variables
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || (test -f VERSION && cat VERSION) || echo "v0.0.0-dev")
@@ -7,7 +7,34 @@ BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 BUILD_USER ?= $(shell whoami)@$(shell hostname)
 BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 
+# For local testing of build/release processes, create a buildx builder if you don't have one, and
+# start a local registry if you don't have one:
+#
+#     docker buildx create --name container-builder --driver docker-container --bootstrap \
+#            --platform linux/amd64,linux/arm64,linux/ppc64le
+#
+#     docker run -d -p 5000:5000 --restart always --name registry --init --network host registry:3
+#
+# and run a multi-arch build with:
+#
+#     make DOCKER_IMAGE_REPO=localhost:5000/thanos/thanos-parquet-gateway \
+#          DOCKER_BUILD="docker buildx build --builder container-builder --load" \
+#          DOCKER_MANIFEST_CREATE_FLAGS=--insecure \
+#          docker-build docker-push docker-manifest
+#
+# The Makefile's build flow doesn't currently support bypassing local dockerd to directly push, so
+# images are stored into the local dockerd before being pushed to the registry.
+#
+
 # Docker variables
+
+# Override docker to allow direct use of podman or other tools
+DOCKER ?= docker
+DOCKER_BUILD ?= $(DOCKER) buildx build --load
+# Pass --insecure here if manifest create fails with "no such manifest" on a local registry
+DOCKER_MANIFEST_CREATE_FLAGS ?=
+
+# Tag and image pushed to the remote repo by docker-push and docker-manifest targets
 DOCKER_IMAGE_REPO ?= quay.io/thanos/thanos-parquet-gateway
 DOCKER_IMAGE_TAG  ?= $(subst /,-,$(shell git rev-parse --abbrev-ref HEAD))-$(shell date +%Y-%m-%d)-$(shell git rev-parse --short HEAD)
 DOCKER_CI_TAG ?= $(shell git rev-parse --short HEAD)
@@ -21,8 +48,8 @@ BUILD_DOCKER_ARCHS = $(addprefix docker-build-,$(DOCKER_ARCHS))
 TEST_DOCKER_ARCHS  = $(addprefix docker-test-,$(DOCKER_ARCHS))
 PUSH_DOCKER_ARCHS  = $(addprefix docker-push-,$(DOCKER_ARCHS))
 
-
-BASE_DOCKER_SHA=''
+# Base images to use are resolved from .busybox-versions
+BASE_DOCKER_IMAGE ?= quay.io/prometheus/busybox@sha256:
 arch = $(shell uname -m)
 
 include .busybox-versions
@@ -58,6 +85,7 @@ LDFLAGS = -s -w \
 GO_BUILD_ARGS = -tags stringlabels -ldflags="$(LDFLAGS)"
 
 all: build
+.DEFAULT_GOAL=all
 
 ci: test-norace build lint
 
@@ -69,6 +97,11 @@ GOIMPORTS = $(GOTOOL) golang.org/x/tools/cmd/goimports
 REVIVE = $(GOTOOL) github.com/mgechev/revive
 MODERNIZE = $(GOTOOL) golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize
 PROTOC = protoc
+
+# Pinned busybox base image versions are currently manually updated here; "make busybox-versions".
+# It should be under a GH workflow.
+busybox-versions: scripts/busybox-updater.sh
+	./scripts/busybox-updater.sh
 
 lint: $(wildcard **/*.go)
 	@echo ">> running lint..."
@@ -105,14 +138,14 @@ proto/metapb/meta.pb.go: proto/metapb/meta.proto
 docker-test: $(TEST_DOCKER_ARCHS)
 $(TEST_DOCKER_ARCHS): docker-test-%:
 	@echo ">> testing image"
-	@docker run "thanos-linux-$*" --help
+	@$(DOCKER) run "thanos-linux-$*" --help
 
 .PHONY: docker-build $(BUILD_DOCKER_ARCHS)
 docker-build: $(BUILD_DOCKER_ARCHS)
 $(BUILD_DOCKER_ARCHS): docker-build-%:
-	@docker build -t "thanos-linux-$*" \
-  --build-arg BASE_DOCKER_SHA="$($*)" \
-  --build-arg ARCH="$*" \
+	@$(DOCKER_BUILD) -t "thanos-linux-$*" \
+  --build-arg BASEIMAGE="$(BASE_DOCKER_IMAGE)$($*)" \
+  --platform=linux/$* \
   .
 
 .PHONY: docker-push $(PUSH_DOCKER_ARCHS)
@@ -127,10 +160,10 @@ $(PUSH_DOCKER_ARCHS): docker-push-%:
 .PHONY: docker-manifest
 docker-manifest:
 	@echo ">> creating and pushing manifest"
-	@DOCKER_CLI_EXPERIMENTAL=enabled docker manifest create -a "$(DOCKER_IMAGE_REPO):$(DOCKER_IMAGE_TAG)" $(foreach ARCH,$(DOCKER_ARCHS),$(DOCKER_IMAGE_REPO)-linux-$(ARCH):$(DOCKER_IMAGE_TAG))
-	@DOCKER_CLI_EXPERIMENTAL=enabled docker manifest push "$(DOCKER_IMAGE_REPO):$(DOCKER_IMAGE_TAG)"
+	DOCKER_CLI_EXPERIMENTAL=enabled $(DOCKER) manifest create $(DOCKER_MANIFEST_CREATE_FLAGS) -a "$(DOCKER_IMAGE_REPO):$(DOCKER_IMAGE_TAG)" $(foreach ARCH,$(DOCKER_ARCHS),$(DOCKER_IMAGE_REPO)-linux-$(ARCH):$(DOCKER_IMAGE_TAG))
+	DOCKER_CLI_EXPERIMENTAL=enabled $(DOCKER) manifest push "$(DOCKER_IMAGE_REPO):$(DOCKER_IMAGE_TAG)"
 
-# Cross-compilation targets
+# Cross-compilation targets. These are NOT used to produce the Docker images.
 crossbuild:
 	@echo ">> cross-building binaries"
 	@mkdir -p .build

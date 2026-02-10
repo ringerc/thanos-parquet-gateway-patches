@@ -1,13 +1,44 @@
-# By default we pin to amd64 sha. Use make docker to automatically adjust for arm64 versions.
-ARG BASE_DOCKER_SHA="97a9aacc097e5dbdec33b0d671adea0785e76d26ff2b979ee28570baf6a9155d"
+# syntax=docker/dockerfile:1
 
-FROM quay.io/prometheus/busybox@sha256:${BASE_DOCKER_SHA}
+# Multi-platform build image with cross compilation. See
+# https://docs.docker.com/build/building/multi-platform/
+# and https://hub.docker.com/_/golang/#cross-compile-your-app-inside-the-docker-container
+
+# Image to use for go builds
+ARG GOIMAGE=golang:1.25-trixie
+
+# Image to use as base for released result. Typically the base images are injected
+# by the Makefile using pinned digests for this image from the .busybox_images
+# file.
+ARG BASEIMAGE=quay.io/prometheus/busybox:latest
+
+# Compile on the local build arch
+FROM --platform=$BUILDPLATFORM $GOIMAGE AS builder
+ARG GOOS
+ARG GOARCH
+
+WORKDIR /build
+
+# Cache modules to make rebuilds faster
+# https://go.dev/ref/mod#module-cache
+COPY go.* ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+
+# Build the binary, possibly cross-compiling
+ARG TARGETARCH
+ARG TARGETOS
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    mkdir bin && \
+    GOARCH=${TARGETARCH} GOOS=${TARGETOS} go build -o bin/thanos-parquet-gateway ./cmd/...
+
+# Prepare result image on the target arch
+FROM $BASEIMAGE
+
 LABEL maintainer="The Thanos Authors"
-
-ARG ARCH="amd64"
-ARG OS="linux"
-
-COPY .build/${OS}-${ARCH}/thanos-parquet-gateway /bin/thanos-parquet-gateway
+COPY --from=builder /build/bin/thanos-parquet-gateway /bin/thanos-parquet-gateway
 
 RUN adduser \
     -D `#Dont assign a password` \
@@ -17,4 +48,3 @@ RUN adduser \
     chown thanos /bin/thanos-parquet-gateway
 USER 1001
 ENTRYPOINT [ "/bin/thanos-parquet-gateway" ]
-
