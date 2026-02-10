@@ -28,3 +28,24 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+shell.nix
+bin
+Makefile
+go.tools.mod
+go.tools.sum
+revive.toml
+scripts/
+
+# make crossbuild outputs this but we don't need this build context now we're doing multi-stage
+# containerised builds
+.build
+
+# No need to trigger a new build on text changes in the dockerfile like
+# comments; the docker builder layer caching will take care of needed rebuilds, and the
+# Dockerfile doesn't need to be in the build context.
+Dockerfile
+
+# Surprisingly, .dockerignore must be explicitly in .dockerignore to stop it from
+# dirtying the build context.
+.dockerignore
