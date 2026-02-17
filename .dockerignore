@@ -49,3 +49,5 @@ Dockerfile
 # Surprisingly, .dockerignore must be explicitly in .dockerignore to stop it from
 # dirtying the build context.
 .dockerignore
+
+dist/

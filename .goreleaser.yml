@@ -1,0 +1,49 @@
+#
+version: 2
+project_name: thanos-parquet-gateway
+builds:
+  # Test build for all archs with:
+  #
+  #     goreleaser build --snapshot --clean --id parquet-gateway
+  #
+  - id: parquet-gateway
+    binary: parquet-gateway
+    main: ./cmd/.
+    no_unique_dist_dir: true
+    # For debug builds remove -s from the ldflags
+    ldflags: -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+  # Test build for your arch only with
+  #
+  #     goreleaser build --snapshot --clean --single-target --id parquet-gateway-fips
+  #
+  # Make sure to do a proper build in the cross-compile goreleaser container before
+  # merging changes, to verify that your changes work on other architectures.
+  #
+  - id: parquet-gateway-fips
+    binary: parquet-gateway-fips
+    main: ./cmd/.
+    no_unique_dist_dir: true
+    # For debug builds remove -s from the ldflags
+    ldflags: -s -w
+    tags:
+      - fipsonly
+    env:
+      - CGO_ENABLED=1
+      - GOEXPERIMENT=boringcrypto
+      - >-
+        {{- if eq .Os "linux" }}
+          {{- if eq .Arch "amd64"}}CC=x86_64-linux-gnu-gcc{{- end }}
+          {{- if eq .Arch "arm64"}}CC=aarch64-linux-gnu-gcc{{- end }}
+        {{- end }}
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+checksum:
+  name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
