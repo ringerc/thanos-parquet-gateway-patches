@@ -476,6 +476,25 @@ func (qapi *queryAPI) query(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Add result metrics to span
+	var seriesCount, sampleCount int64
+	switch results := res.Value.(type) {
+	case promql.Vector:
+		seriesCount = int64(len(results))
+		sampleCount = int64(len(results))
+	case promql.Matrix:
+		seriesCount = int64(len(results))
+		for _, series := range results {
+			sampleCount += int64(len(series.Floats))
+		}
+	case promql.Scalar:
+		seriesCount = 1
+		sampleCount = 1
+	}
+	span.SetAttributes(
+		attribute.Int64("result.series", seriesCount),
+		attribute.Int64("result.samples", sampleCount),
+	)
 	writeQueryResponse(w, res, qapi.l)
 }
 
@@ -561,6 +580,25 @@ func (qapi *queryAPI) queryRange(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Add result metrics to span
+	var seriesCount, sampleCount int64
+	switch results := res.Value.(type) {
+	case promql.Vector:
+		seriesCount = int64(len(results))
+		sampleCount = int64(len(results))
+	case promql.Matrix:
+		seriesCount = int64(len(results))
+		for _, series := range results {
+			sampleCount += int64(len(series.Floats))
+		}
+	case promql.Scalar:
+		seriesCount = 1
+		sampleCount = 1
+	}
+	span.SetAttributes(
+		attribute.Int64("result.series", seriesCount),
+		attribute.Int64("result.samples", sampleCount),
+	)
 	writeQueryResponse(w, res, qapi.l)
 }
 

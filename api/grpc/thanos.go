@@ -276,8 +276,11 @@ func (qs *QueryServer) Query(req *querypb.QueryRequest, srv querypb.Query_QueryS
 			return err
 		}
 	}
+	var seriesCount, sampleCount int64
 	switch results := res.Value.(type) {
 	case promql.Vector:
+		seriesCount = int64(len(results))
+		sampleCount = int64(len(results))
 		for _, result := range results {
 			series := &prompb.TimeSeries{
 				Samples: []prompb.Sample{{Value: float64(result.F), Timestamp: int64(result.T)}},
@@ -288,11 +291,17 @@ func (qs *QueryServer) Query(req *querypb.QueryRequest, srv querypb.Query_QueryS
 			}
 		}
 	case promql.Scalar:
+		seriesCount = 1
+		sampleCount = 1
 		series := &prompb.TimeSeries{Samples: []prompb.Sample{{Value: float64(results.V), Timestamp: int64(results.T)}}}
 		if err := srv.Send(querypb.NewQueryResponse(series)); err != nil {
 			return err
 		}
 	}
+	span.SetAttributes(
+		attribute.Int64("result.series", seriesCount),
+		attribute.Int64("result.samples", sampleCount),
+	)
 	if stats := qry.Stats(); stats != nil {
 		if err := srv.Send(querypb.NewQueryStatsResponse(toQueryStats(stats))); err != nil {
 			return err
@@ -344,9 +353,12 @@ func (qs *QueryServer) QueryRange(req *querypb.QueryRangeRequest, srv querypb.Qu
 			return err
 		}
 	}
+	var seriesCount, sampleCount int64
 	switch results := res.Value.(type) {
 	case promql.Matrix:
+		seriesCount = int64(len(results))
 		for _, result := range results {
+			sampleCount += int64(len(result.Floats))
 			series := &prompb.TimeSeries{
 				Samples: samplesFromModel(result.Floats),
 				Labels:  zLabelsFromMetric(result.Metric),
@@ -356,6 +368,8 @@ func (qs *QueryServer) QueryRange(req *querypb.QueryRangeRequest, srv querypb.Qu
 			}
 		}
 	case promql.Vector:
+		seriesCount = int64(len(results))
+		sampleCount = int64(len(results))
 		for _, result := range results {
 			series := &prompb.TimeSeries{
 				Samples: []prompb.Sample{{Value: float64(result.F), Timestamp: int64(result.T)}},
@@ -366,11 +380,17 @@ func (qs *QueryServer) QueryRange(req *querypb.QueryRangeRequest, srv querypb.Qu
 			}
 		}
 	case promql.Scalar:
+		seriesCount = 1
+		sampleCount = 1
 		series := &prompb.TimeSeries{Samples: []prompb.Sample{{Value: float64(results.V), Timestamp: int64(results.T)}}}
 		if err := srv.Send(querypb.NewQueryRangeResponse(series)); err != nil {
 			return err
 		}
 	}
+	span.SetAttributes(
+		attribute.Int64("result.series", seriesCount),
+		attribute.Int64("result.samples", sampleCount),
+	)
 
 	if stats := qry.Stats(); stats != nil {
 		if err := srv.Send(querypb.NewQueryRangeStatsResponse(toQueryStats(stats))); err != nil {
