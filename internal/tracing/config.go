@@ -28,8 +28,8 @@ const (
 
 // TracingConfig is the top-level config structure compatible with Thanos.
 type TracingConfig struct {
-	Type   TracingProvider    `yaml:"type"`
-	Config map[string]interface{} `yaml:"config"`
+	Type   TracingProvider `yaml:"type"`
+	Config map[string]any  `yaml:"config"`
 }
 
 // slogToGoKitAdapter adapts slog.Logger to go-kit log.Logger interface.
@@ -67,6 +67,18 @@ func SetupTracingFromConfig(ctx context.Context, logger *slog.Logger, confConten
 		return fmt.Errorf("parsing tracing YAML config: %w", err)
 	}
 
+	return SetupTracingFromParsedConfig(ctx, logger, tracingConf)
+}
+
+// SetupTracingFromParsedConfig initializes tracing from a pre-parsed TracingConfig.
+// This avoids the need to serialize and deserialize configuration when building
+// config programmatically (e.g., from legacy flags).
+func SetupTracingFromParsedConfig(ctx context.Context, logger *slog.Logger, tracingConf *TracingConfig) error {
+	if tracingConf == nil || tracingConf.Type == "" {
+		// No tracing configured
+		return nil
+	}
+
 	// Extract the config section as YAML for the provider
 	configYaml, err := yaml.Marshal(tracingConf.Config)
 	if err != nil {
@@ -98,8 +110,6 @@ func SetupTracingFromConfig(ctx context.Context, logger *slog.Logger, confConten
 	default:
 		return fmt.Errorf("unsupported tracing provider: %s", tracingConf.Type)
 	}
-
-	return nil
 }
 
 // ReadConfigFile reads and expands environment variables in the config file.
